@@ -15,7 +15,7 @@
 
 ## Why
 
-The Claude desktop app keeps every Code session forever: a JSON record per session, plus the CLI transcript, file history and session environment. After a few weeks that is thousands of sessions and well over a gigabyte of dead weight. This tool removes everything that is not running, in seconds.
+The Claude desktop app keeps every Code session forever: a JSON record per session, plus the CLI transcript, file history and session environment. After a few weeks that is thousands of sessions and well over a gigabyte of dead weight. This tool archives idle sessions from the last 24 hours and deletes everything older, in seconds.
 
 ## Features
 
@@ -60,6 +60,7 @@ space reclaimed: 1657.6 MB
 | `--dry-run` | off | report only |
 | `--min-idle-min N` | 2 | anything touched within N minutes counts as running |
 | `--keep a,b` | none | never touch these ids |
+| `--delete-after-hours N` | 24 | idle sessions newer than N hours are **archived** (data kept), older are **deleted** |
 | `--no-orphans` | off | keep CLI transcripts without a desktop record |
 | `-v` | off | list every kept session and why |
 | `--appdata`, `--claudehome` | auto | override data locations (testing) |

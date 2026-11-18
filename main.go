@@ -32,7 +32,8 @@ var (
 	appdata   = flag.String("appdata", filepath.Join(os.Getenv("APPDATA"), "Claude"), "Claude desktop data dir")
 	claudeDir = flag.String("claudehome", filepath.Join(os.Getenv("USERPROFILE"), ".claude"), "~/.claude dir")
 	idleMin   = flag.Int("min-idle-min", 2, "any session touched within N minutes counts as running")
-	keepIDs   = flag.String("keep", "", "comma list of session ids (local_... or cli uuid) to never touch")
+	delAfterH = flag.Int("delete-after-hours", 24, "idle sessions newer than this are archived, older are deleted")
+	keepIDs   =flag.String("keep", "", "comma list of session ids (local_... or cli uuid) to never touch")
 	dryRun    = flag.Bool("dry-run", false, "report only, delete nothing")
 	noOrphans = flag.Bool("no-orphans", false, "keep CLI transcripts that have no desktop session")
 	noProcs   = flag.Bool("skip-process-scan", false, "TEST ONLY: skip live process scan")
@@ -156,6 +157,11 @@ func main() {
 				continue
 			}
 			s := &session{id: id, cli: id, title: "(orphan CLI transcript)", paths: cliPaths(*claudeDir, id)}
+			for _, p := range s.paths {
+				if t := newest(p); t.After(s.activity) {
+					s.activity = t
+				}
+			}
 			if live[id] || selfIDs[id] {
 				s.keep = "referenced by live process / this session"
 			}
@@ -176,13 +182,27 @@ func main() {
 		}
 	}
 
-	var del, kept int
+	var del, kept, arch int
 	var total, freed int64
 	for _, s := range sessions {
 		if s.keep != "" {
 			kept++
 			if *verbose {
 				fmt.Printf("KEEP   %-45s %s  [%s]\n", trunc(s.title, 45), s.id, s.keep)
+			}
+			continue
+		}
+		// Idle but newer than --delete-after-hours: ARCHIVE (keep data). Older: delete.
+		if time.Since(s.activity) < time.Duration(*delAfterH)*time.Hour {
+			if s.file == "" { // orphan transcript: cannot be archived, keep
+				kept++
+				continue
+			}
+			if !s.archived {
+				arch++
+				if !*dryRun && !archiveJSON(s.file) {
+					fmt.Fprintf(os.Stderr, "archive failed: %s\n", s.file)
+				}
 			}
 			continue
 		}
@@ -212,8 +232,31 @@ func main() {
 		freed = total
 	}
 	fmt.Printf("\nsessions scanned: %d | kept (running/recent/locked/unreadable): %d | %s: %d\n", len(sessions), kept, mode, del)
+	fmt.Printf("archived (idle, newer than %dh, data kept): %d\n", *delAfterH, arch)
 	fmt.Printf("cowork session dirs %s: %d\n", strings.ToLower(mode), cdel)
 	fmt.Printf("space reclaimed: %.1f MB\n", float64(freed+cfreed)/1e6)
+}
+
+// archiveJSON flips "isArchived":false -> true in place (text edit, all other fields untouched).
+func archiveJSON(p string) bool {
+	b, err := os.ReadFile(p)
+	if err != nil {
+		return false
+	}
+	re := regexp.MustCompile(`"isArchived"\s*:\s*false`)
+	if !re.Match(b) {
+		return false
+	}
+	nb := re.ReplaceAll(b, []byte(`"isArchived":true`))
+	tmp := p + ".tmp"
+	if os.WriteFile(tmp, nb, 0o644) != nil {
+		return false
+	}
+	if os.Rename(tmp, p) != nil {
+		os.Remove(tmp)
+		return false
+	}
+	return true
 }
 
 // cliPaths: every on-disk artifact for one CLI session id.
