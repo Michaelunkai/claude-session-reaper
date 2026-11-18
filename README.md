@@ -21,8 +21,8 @@ The Claude desktop app keeps every Code session forever: a JSON record per sessi
 
 - ⚡ **One command, instant cleanup**, with no prompts and a summary at the end.
 - 🛡️ **Fail-closed safety.** A session is kept if any of these hold:
-  - a live `claude.exe` was started with `--resume` / `--session-id` for it
-  - it was touched in the last N minutes (default 10)
+  - a turn is in flight (the app recorded a user message newer than the last turn end)
+  - it was touched in the last N minutes (default 2)
   - one of its files is held open by another process
   - its record is unreadable
   - you listed it with `--keep`
@@ -58,11 +58,13 @@ space reclaimed: 1657.6 MB
 | Flag | Default | Meaning |
 |---|---|---|
 | `--dry-run` | off | report only |
-| `--min-idle-min N` | 10 | anything touched within N minutes counts as running |
+| `--min-idle-min N` | 2 | anything touched within N minutes counts as running |
 | `--keep a,b` | none | never touch these ids |
 | `--no-orphans` | off | keep CLI transcripts without a desktop record |
 | `-v` | off | list every kept session and why |
 | `--appdata`, `--claudehome` | auto | override data locations (testing) |
+
+> An idle `claude.exe` still attached to a session does **not** count as running; only an in-flight turn does.
 
 > ⚠️ Deletion is **permanent**. Run `--dry-run` first. Pass `--keep` for any session you started that is idle but that you still need.
 

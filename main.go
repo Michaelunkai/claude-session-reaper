@@ -31,7 +31,7 @@ type session struct {
 var (
 	appdata   = flag.String("appdata", filepath.Join(os.Getenv("APPDATA"), "Claude"), "Claude desktop data dir")
 	claudeDir = flag.String("claudehome", filepath.Join(os.Getenv("USERPROFILE"), ".claude"), "~/.claude dir")
-	idleMin   = flag.Int("min-idle-min", 10, "any session touched within N minutes counts as running")
+	idleMin   = flag.Int("min-idle-min", 2, "any session touched within N minutes counts as running")
 	keepIDs   = flag.String("keep", "", "comma list of session ids (local_... or cli uuid) to never touch")
 	dryRun    = flag.Bool("dry-run", false, "report only, delete nothing")
 	noOrphans = flag.Bool("no-orphans", false, "keep CLI transcripts that have no desktop session")
@@ -51,6 +51,14 @@ func main() {
 	live, err := liveIDs()
 	if err != nil && !*noProcs {
 		fatal("process scan failed, refusing to delete anything: %v", err)
+	}
+	keepSet := map[string]bool{}
+	for _, k := range strings.Split(*keepIDs, ",") {
+		if k = strings.ToLower(strings.TrimSpace(k)); k != "" {
+			keepSet[k] = true
+			keepSet[strings.TrimPrefix(k, "local_")] = true
+			live[k] = true // also protects orphan transcripts
+		}
 	}
 	selfIDs := map[string]bool{}
 	for _, k := range []string{"CLAUDE_SESSION_ID", "CLAUDE_CODE_SESSION_ID"} {
@@ -85,6 +93,13 @@ func main() {
 			}
 		}
 		s.cli = strings.Join(s.cliIDs, ",")
+		// Turn in flight = user frame newer than last turn edge (and not ancient). Idle process != running.
+		if uf, ok := m["latestUserFrameAt"].(float64); ok {
+			te, _ := m["lastTurnEdgeAt"].(float64)
+			if uf > te && time.Since(time.UnixMilli(int64(uf))) < 12*time.Hour {
+				s.keep = "turn in flight (user frame newer than last turn end)"
+			}
+		}
 		var latest int64
 		for _, k := range []string{"lastActivityAt", "lastTurnEdgeAt", "lastFocusedAt", "latestUserFrameAt", "createdAt"} {
 			if v, ok := m[k].(float64); ok && int64(v) > latest {
@@ -104,9 +119,10 @@ func main() {
 		if s.keep != "" {
 			continue
 		}
+		// Desktop sessions: a merely attached idle claude.exe does NOT make a session running; only --keep / this session does.
 		for _, id := range append([]string{strings.ToLower(s.id), strings.ToLower(strings.TrimPrefix(s.id, "local_"))}, s.cliIDs...) {
-			if live[id] || selfIDs[id] {
-				s.keep = "referenced by live process / this session"
+			if keepSet[id] || selfIDs[id] {
+				s.keep = "protected via --keep / this session"
 			}
 		}
 		for _, id := range s.cliIDs {
@@ -269,12 +285,6 @@ func liveIDs() (map[string]bool, error) {
 	}
 	for _, m := range flagIDRe.FindAllStringSubmatch(string(b), -1) {
 		out[strings.ToLower(m[1])] = true
-	}
-	for _, k := range strings.Split(*keepIDs, ",") {
-		if k = strings.ToLower(strings.TrimSpace(k)); k != "" {
-			out[k] = true
-			out[strings.TrimPrefix(k, "local_")] = true
-		}
 	}
 	return out, nil
 }
