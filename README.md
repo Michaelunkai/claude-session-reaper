@@ -69,6 +69,17 @@ space reclaimed: 1657.6 MB
 
 > ⚠️ Deletion is **permanent**. Run `--dry-run` first. Pass `--keep` for any session you started that is idle but that you still need.
 
+## Live pass: the open Claude app, no restart
+
+After the file cleanup the exe drives the **open** Claude desktop app through Windows UI Automation (hidden PowerShell child, embedded in the exe). In Code mode it unpins and **archives every session that is not Running**. In Chat mode it **deletes every chat** (chats have no archive; this is permanent). It re-finds each row's button by name right before clicking, verifies the menu belongs to that row, refuses to confirm any "Delete session" dialog, and aborts if the app is not really in the expected mode. The Android app and claude.ai follow because the account syncs. It moves your mouse while running.
+
+| Flag | Meaning |
+|---|---|
+| `--no-ui` | skip the live pass |
+| `--no-chats` | live pass archives sessions but does not delete chats |
+| `--keep-chats N` | keep the newest N chats |
+| `--watch S` | repeat everything every S seconds |
+
 ## What it does *not* touch
 
 Claude.ai cloud and Remote-Control bridge sessions live on Anthropic's servers and need account credentials, so they are out of scope. Cowork configuration and skills are never modified. The Claude app keeps an in-memory sidebar cache, so deleted entries disappear after you restart the app.

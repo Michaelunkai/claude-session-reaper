@@ -5,6 +5,7 @@
 package main
 
 import (
+	_ "embed"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -44,8 +45,65 @@ var flagIDRe = regexp.MustCompile(`(?i)--(?:resume|session-id)[ =]"?([0-9a-f]{8}
 
 var uuidRe =regexp.MustCompile(`(?i)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}`)
 
+//go:embed ui.ps1
+var uiScript string
+
+var (
+	noUI      = flag.Bool("no-ui", false, "skip the live Claude-app pass (archive/delete in the open app)")
+	noChats   = flag.Bool("no-chats", false, "live pass: do not delete chats")
+	keepChats = flag.Int("keep-chats", 0, "live pass: keep the newest N chats")
+	watchSec  = flag.Int("watch", 0, "repeat everything every N seconds (0 = run once)")
+)
+
+// runUI drives the OPEN Claude desktop app (UI Automation, hidden PowerShell child): unpin+archive idle
+// sessions and delete chats. Takes effect live, no restart.
+func runUI() {
+	f, err := os.CreateTemp("", "reaper-ui-*.ps1")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "ui: temp file:", err)
+		return
+	}
+	defer os.Remove(f.Name())
+	f.WriteString(uiScript)
+	f.Close()
+	args := []string{"-NoProfile", "-STA", "-ExecutionPolicy", "Bypass", "-File", f.Name()}
+	if *dryRun {
+		args = append(args, "-DryRun")
+	}
+	if *noChats {
+		args = append(args, "-NoChats")
+	}
+	if *keepChats > 0 {
+		args = append(args, "-KeepChats", fmt.Sprint(*keepChats))
+	}
+	cmd := exec.Command("powershell", args...)
+	var env []string
+	for _, e := range os.Environ() { // stale LIB/INCLUDE break Add-Type in Windows PowerShell
+		if u := strings.ToUpper(e); strings.HasPrefix(u, "LIB=") || strings.HasPrefix(u, "INCLUDE=") {
+			continue
+		}
+		env = append(env, e)
+	}
+	cmd.Env = env
+	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: 0x08000000}
+	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
+	if err := cmd.Run(); err != nil {
+		fmt.Fprintln(os.Stderr, "ui pass error:", err)
+	}
+}
+
 func main() {
 	flag.Parse()
+	for {
+		runOnce()
+		if *watchSec <= 0 {
+			return
+		}
+		time.Sleep(time.Duration(*watchSec) * time.Second)
+	}
+}
+
+func runOnce() {
 	now := time.Now()
 	cutoff := now.Add(-time.Duration(*idleMin) * time.Minute)
 
@@ -235,6 +293,9 @@ func main() {
 	fmt.Printf("archived (idle, newer than %dh, data kept): %d\n", *delAfterH, arch)
 	fmt.Printf("cowork session dirs %s: %d\n", strings.ToLower(mode), cdel)
 	fmt.Printf("space reclaimed: %.1f MB\n", float64(freed+cfreed)/1e6)
+	if !*noUI {
+		runUI()
+	}
 }
 
 // archiveJSON flips "isArchived":false -> true in place (text edit, all other fields untouched).
